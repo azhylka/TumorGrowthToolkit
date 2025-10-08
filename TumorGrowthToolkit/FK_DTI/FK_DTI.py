@@ -28,6 +28,7 @@ class FK_DTI_Solver(FK_Solver):
     def makeXYZ_rgb_from_tensor(self, tensor, exponent = 1 , linear = 0, wm = None, gm = None, ratioDw_Dg = None, desiredSTD = None):
 
         upper_limit = self.params.get('relative_upper_limit_DTI', 2)
+        lower_limit = self.params.get('relative_lower_limit_DTI', 0)
         output = np.zeros(tensor.shape[:4])
 
         # use diagonal elements
@@ -69,6 +70,8 @@ class FK_DTI_Solver(FK_Solver):
 
         output[output>upper_limit] = upper_limit
         output[output<0] = 0
+        output[np.logical_and( np.repeat((brainMask > 0)[..., np.newaxis], repeats=3, axis=-1), output < lower_limit)] = lower_limit
+
 
         return output
 
@@ -221,7 +224,10 @@ class FK_DTI_Solver(FK_Solver):
 
 
         if doPlot:
+                        
+                        
             from matplotlib import pyplot as plt   
+
             plotSlice = sRGB[:,:,int(NzT1_pct * sRGB.shape[2])]
             plt.imshow(plotSlice)
             plt.title('Original - main eigenvector')
@@ -320,6 +326,8 @@ class FK_DTI_Solver(FK_Solver):
                 if verbose and t % 1000 == 0:
                     imshow_slice = cropped_RGB[:,:,int(NzT1_pct * A.shape[2])]
                     imshow_slice /= np.max(imshow_slice)
+                    from matplotlib import pyplot as plt   
+
                     plt.imshow(imshow_slice)
                     plt.imshow(A[:,:,int(NzT1_pct * A.shape[2])], alpha=0.5*(A[:,:,int(NzT1_pct * A.shape[2])]>0.001), cmap='hot', vmin=0, vmax=1)
                     plt.show()
