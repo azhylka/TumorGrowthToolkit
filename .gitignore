@@ -4,4 +4,5 @@ dist/*
 synthetic_gens/*
 .venv/*
 .vscode/*
+.DS_Store
 

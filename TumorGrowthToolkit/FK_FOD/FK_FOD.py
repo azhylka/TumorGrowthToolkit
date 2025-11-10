@@ -3,11 +3,11 @@ import numpy as np
 import copy
 from scipy.ndimage import zoom
 from ..FK.FK import Solver as FK_Solver
-from . import tools
 import scipy.ndimage
 from scipy.ndimage import binary_dilation
 import nibabel as nib
 import matplotlib.pyplot as plt
+import itertools
 
 '''
 Forward solver DTI 
@@ -25,36 +25,28 @@ class FK_FOD_Solver(FK_Solver):
     def __init__(self, params):
         super().__init__(params)
 
-    def makeXYZ_rgb_from_tensor(self, tensor, exponent = 1 , linear = 0, wm = None, gm = None, ratioDw_Dg = None, desiredSTD = None):
+    def filter_gm_csf(self, tensor, exponent = 1 , linear = 0, wm = None, gm = None, ratioDw_Dg = None): #, desiredSTD = None):
 
         upper_limit = self.params.get('relative_upper_limit_DTI', 2)
         lower_limit = self.params.get('relative_lower_limit_DTI', 0)
-        output = np.zeros(tensor.shape[:4])
-
-        # use diagonal elements
-        output[:,:,:,0] = tensor[:,:,:,0,0]
-        output[:,:,:,1] = tensor[:,:,:,1,1]
-        output[:,:,:,2] = tensor[:,:,:,2,2]
-
-        output[output<0] = 0
+        output = np.copy(tensor)
 
         brainMask = np.max(output, axis=-1) > 0
 
-        if wm is not None:
-            normalizationMask = wm > 0
-        else:
-            normalizationMask = brainMask
+        # if wm is not None:
+        #     normalizationMask = wm > 0
+        # else:
+        #     normalizationMask = brainMask
 
-        if desiredSTD is not None:
-            output[brainMask] -= np.mean(output[normalizationMask])
-            output[brainMask] /= np.std(output[normalizationMask])
-            output[brainMask] *= desiredSTD
-            output[brainMask] += 1
-        else:
-            output[brainMask] /= np.mean(output[normalizationMask])
+        # if desiredSTD is not None:
+        #     output[brainMask] -= np.mean(output[normalizationMask])
+        #     output[brainMask] /= np.std(output[normalizationMask])
+        #     output[brainMask] *= desiredSTD
+        #     output[brainMask] += 1
+        # else:
+        #     output[brainMask] /= np.mean(output[normalizationMask])
 
         if not (wm is None or gm  is None or ratioDw_Dg is None):
-
             print('set gm to uniform and wm to DTI')
             csfMask = np.logical_and(wm <= 0, gm <= 0)
             output[csfMask] = 0 
@@ -63,70 +55,87 @@ class FK_FOD_Solver(FK_Solver):
             borderMask = binary_dilation(csfMask, iterations = 1)
             output[borderMask] = 0
             #clip wm to lowest gm
-            output[np.logical_and(np.repeat((wm > 0)[..., np.newaxis], repeats=3, axis=-1), output < gmThreshold)] = gmThreshold
+            output[np.logical_and(np.repeat((wm > 0)[..., np.newaxis], repeats=output.shape[-1], axis=-1), output < gmThreshold)] = gmThreshold
 
-        output[output<0] = 0
+        # output[output<0] = 0
+        # FIXME does it make sense to use exponent?
         output = output ** exponent + linear * output
 
         output[output>upper_limit] = upper_limit
         output[output<0] = 0
-        output[np.logical_and( np.repeat((brainMask > 0)[..., np.newaxis], repeats=3, axis=-1), output < lower_limit)] = lower_limit
-
+        output[np.logical_and( 
+                    np.repeat((brainMask > 0)[..., np.newaxis], repeats=output.shape[-1], axis=-1),
+                    output < lower_limit)] = lower_limit
 
         return output
 
-    def m_Tildas(self, rgbImg):
+    # def m_Tildas(self, rgbImg):
         
-        retTildas = np.zeros_like(rgbImg)
+    #     retTildas = np.zeros_like(rgbImg)
 
-        for i in range(3):
-            retTildas[:,:,:,i] = (np.roll(rgbImg[:,:,:,i],-1,axis=i) + rgbImg[:,:,:,i])/2
+    #     for i in range(3):
+    #         retTildas[:,:,:,i] = (np.roll(rgbImg[:,:,:,i],-1,axis=i) + rgbImg[:,:,:,i])/2
         
-        return retTildas
+    #     return retTildas
 
-    def get_D_from_DTI(self, dtiRGB, Dw):
+    def get_D_from_FOD(self, cubed_FOD, Dw):
         '''
-        dtiRGB: 4D array of shape (Nx,Ny,Nz,3) containing the RGB values of the DTI image
-        Dw: diffusion coefficient
+        cubed_FOD: 4D numpy array with the last dimension of size 26. Each channel corresponds to a direction in 3D space.
+        The values correspond to the average amplitude of the FOD segment corresponding to that direction. 
         '''
-        M = self.m_Tildas(dtiRGB)
 
-        D_minus_x = M[:,:,:,0] * Dw
-        D_minus_y = M[:,:,:,1] * Dw
-        D_minus_z = M[:,:,:,2] * Dw
+        dirs_26 = {(x, y, z): idx for idx, (x, y, z) in enumerate(itertools.product((-1, 0, 1), (-1, 0, 1), (-1, 0, 1)))
+                        if not (x == 0 and y == 0 and z == 0)}
 
-        D_plus_x = Dw * np.roll(M[:,:,:,0],1,axis=0)
-        D_plus_y = Dw * np.roll(M[:,:,:,1],1,axis=1)
-        D_plus_z = Dw * np.roll(M[:,:,:,2],1,axis=2)
+        D = {}
+        
+        D["D_minus_x"] = Dw * cubed_FOD[:,:,:,dirs_26[(-1, 0, 0)]]
+        D["D_plus_x"]  = Dw * cubed_FOD[:,:,:,dirs_26[(1, 0, 0)]]
+        D["D_minus_y"] = Dw * cubed_FOD[:,:,:,dirs_26[(0, -1, 0)]]
+        D["D_plus_y"]  = Dw * cubed_FOD[:,:,:,dirs_26[(0, 1, 0)]]
+        D["D_minus_z"] = Dw * cubed_FOD[:,:,:,dirs_26[(0, 0, -1)]]
+        D["D_plus_z"]  = Dw * cubed_FOD[:,:,:,dirs_26[(0, 0, 1)]]
+        D["D-x-y"] = Dw * cubed_FOD[:,:,:,dirs_26[(-1, -1, 0)]]
+        D["D-x+y"] = Dw * cubed_FOD[:,:,:,dirs_26[(-1, 1, 0)]]
+        D["D+x-y"] = Dw * cubed_FOD[:,:,:,dirs_26[(1, -1, 0)]]
+        D["D+x+y"] = Dw * cubed_FOD[:,:,:,dirs_26[(1, 1, 0)]]
+        D["D-x-z"] = Dw * cubed_FOD[:,:,:,dirs_26[(-1, 0, -1)]]
+        D["D-x+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(-1, 0, 1)]]
+        D["D+x-z"] = Dw * cubed_FOD[:,:,:,dirs_26[(1, 0, -1)]]
+        D["D+x+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(1, 0, 1)]]
+        D["D-y-z"] = Dw * cubed_FOD[:,:,:,dirs_26[(0, -1, -1)]]
+        D["D-y+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(0, -1, 1)]]
+        D["D+y-z"] = Dw * cubed_FOD[:,:,:,dirs_26[(0, 1, -1)]]
+        D["D+y+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(0, 1, 1)]] 
 
-        if self.doPlot:
-            import matplotlib.pyplot as plt
-            plt.imshow(D_minus_x[:,:,D_minus_x.shape[2]//2])
-            plt.title("D_minus_x")
-            plt.colorbar()
-            plt.show()
+        # FIXME: adjust plotting
+        # if self.doPlot:
+            # import matplotlib.pyplot as plt
+            # plt.imshow(D_minus_x[:,:,D_minus_x.shape[2]//2])
+            # plt.title("D_minus_x")
+            # plt.colorbar()
+            # plt.show()
 
-            plt.imshow(D_plus_x[:,:,D_plus_x.shape[2]//2])
-            plt.title("D_plus_x")
-            plt.colorbar()
-            plt.show()
+            # plt.imshow(D_plus_x[:,:,D_plus_x.shape[2]//2])
+            # plt.title("D_plus_x")
+            # plt.colorbar()
+            # plt.show()
 
-            plotSliceAsRGB = np.zeros((D_minus_x.shape[0], D_minus_x.shape[1], 3))
-            plotSliceAsRGB[:,:,0] = D_minus_x[:,:,D_minus_x.shape[2]//2]
-            plotSliceAsRGB[:,:,1] = D_minus_y[:,:,D_plus_x.shape[2]//2]
-            plotSliceAsRGB[:,:,2] = D_minus_z[:,:,D_plus_x.shape[2]//2]
-            plt.imshow(plotSliceAsRGB/np.max(plotSliceAsRGB))
-            plt.title("D_rgb_minus")
-            plt.show()
-
-
-            plt.title("difference")
-            plt.imshow(D_plus_x[:,:,D_plus_x.shape[2]//2] - D_minus_x[:,:,D_minus_x.shape[2]//2], cmap='bwr', vmin=-1, vmax=1)
-            plt.colorbar()
-            plt.show()
+            # plotSliceAsRGB = np.zeros((D_minus_x.shape[0], D_minus_x.shape[1], 3))
+            # plotSliceAsRGB[:,:,0] = D_minus_x[:,:,D_minus_x.shape[2]//2]
+            # plotSliceAsRGB[:,:,1] = D_minus_y[:,:,D_plus_x.shape[2]//2]
+            # plotSliceAsRGB[:,:,2] = D_minus_z[:,:,D_plus_x.shape[2]//2]
+            # plt.imshow(plotSliceAsRGB/np.max(plotSliceAsRGB))
+            # plt.title("D_rgb_minus")
+            # plt.show()
 
 
-        return {"D_minus_x": D_minus_x, "D_minus_y": D_minus_y, "D_minus_z": D_minus_z,"D_plus_x": D_plus_x, "D_plus_y": D_plus_y, "D_plus_z": D_plus_z}
+            # plt.title("difference")
+            # plt.imshow(D_plus_x[:,:,D_plus_x.shape[2]//2] - D_minus_x[:,:,D_minus_x.shape[2]//2], cmap='bwr', vmin=-1, vmax=1)
+            # plt.colorbar()
+            # plt.show()
+
+        return D
         
     def FK_update(self, A, D_domain, f, dt, dx, dy, dz):
         D = D_domain
@@ -183,9 +192,9 @@ class FK_FOD_Solver(FK_Solver):
         Dw = self.params['Dw']
         f = self.params['rho']
 
-        diffusionEllipsoidScaling = self.params.get('diffusionEllipsoidScaling', 1.)
-        print(f'diffusionEllipsoidScaling: {diffusionEllipsoidScaling}')
-        desiredSTD = self.params.get('desiredSTD', None)
+        # diffusionEllipsoidScaling = self.params.get('diffusionEllipsoidScaling', 1.)
+        # print(f'diffusionEllipsoidScaling: {diffusionEllipsoidScaling}')
+        # desiredSTD = self.params.get('desiredSTD', None)
 
         diffusionTensorExponent = self.params.get('diffusionTensorExponent', 1) # 3 was a good value but 1 is plain linear
         diffusionTensorLinear = self.params.get('diffusionTensorLinear', 0)
@@ -204,14 +213,15 @@ class FK_FOD_Solver(FK_Solver):
         time_series_solution_Nt = self.params.get('time_series_solution_Nt', None) #record timeseries, number of steps
         verbose = self.params.get('verbose', False)  
 
-        #print("debug start transform")
-        # Apply the transformation
-        if diffusionEllipsoidScaling == 1:
-            tensor_array_prime = self.params["diffusionTensors"]
-        else:
-            tensor_array_prime = tools.elongate_tensor_along_main_axis_torch(self.params["diffusionTensors"], diffusionEllipsoidScaling)
+        # print("debug start transform")
+        fod_distribution = self.params["diffusionTensors"]
+        # # Apply the transformation
+        # if diffusionEllipsoidScaling == 1:
+        #     tensor_array_prime = self.params["diffusionTensors"]
+        # else:
+        #     tensor_array_prime = tools.elongate_tensor_along_main_axis_torch(self.params["diffusionTensors"], diffusionEllipsoidScaling)
 
-        #print("debug end transform")
+        # #print("debug end transform")
 
         if self.params.get('use_homogen_gm', False):
             sGM = self.params['gm']
@@ -219,52 +229,50 @@ class FK_FOD_Solver(FK_Solver):
             ratioDw_Dg = self.params.get('RatioDw_Dg', 10.)
 
             # TODO fix tools...
-            sRGB = self.makeXYZ_rgb_from_tensor(tensor_array_prime, exponent = diffusionTensorExponent , linear = diffusionTensorLinear, wm = sWM, gm = sGM, ratioDw_Dg = ratioDw_Dg, desiredSTD = desiredSTD)
+            tissue_constrained_fod = self.filter_gm_csf(fod_distribution, exponent = diffusionTensorExponent , linear = diffusionTensorLinear, 
+                                      wm = sWM, gm = sGM, ratioDw_Dg = ratioDw_Dg) #, desiredSTD = desiredSTD)
         else:
             # TODO fix tools...
-            sRGB = self.makeXYZ_rgb_from_tensor(tensor_array_prime, exponent = diffusionTensorExponent , linear = diffusionTensorLinear, desiredSTD = desiredSTD)
+            tissue_constrained_fod = self.filter_gm_csf(fod_distribution, exponent = diffusionTensorExponent , linear = diffusionTensorLinear) #, desiredSTD = desiredSTD)
 
         # Validate input
-        assert isinstance(sRGB, np.ndarray), "sRGB must be a numpy array"
-        assert sRGB.ndim == 4, "sRGB must be a 4D numpy array, with the last dimension being 3 (RGB)"
+        assert isinstance(tissue_constrained_fod, np.ndarray), "sRGB must be a numpy array"
+        assert tissue_constrained_fod.ndim == 4, "sRGB must be a 4D numpy array, with the last dimension being 3 (RGB)"
         assert 0 <= NxT1_pct <= 1, "NxT1_pct must be between 0 and 1"
         assert 0 <= NyT1_pct <= 1, "NyT1_pct must be between 0 and 1"
         assert 0 <= NzT1_pct <= 1, "NzT1_pct must be between 0 and 1"
 
         # Interpolate tissue data to lower resolution
-        sRGB_low_res = zoom(sRGB, [res_factor, res_factor ,res_factor, 1] , order=1)  # Linear interpolation
-        brainmask_low_res = zoom(np.max(sRGB_low_res, axis=-1) > 0.000001, res_factor, order=0)  # Nearest neighbor interpolation
-        sRGB_low_res[sRGB_low_res <= 0] = 0
+        low_res_tissue_constrained_fod = zoom(tissue_constrained_fod, [res_factor, res_factor ,res_factor, 1] , order=1)  # Linear interpolation
+        # brainmask_low_res = zoom(np.max(low_res_tissue_constrained_fod, axis=-1) > 0.000001, res_factor, order=0)  # Nearest neighbor interpolation
+        low_res_tissue_constrained_fod[low_res_tissue_constrained_fod <= 0] = 0
 
-
-        if doPlot:
-                        
-                        
+        if doPlot:           
             from matplotlib import pyplot as plt   
 
-            plotSlice = sRGB[:,:,int(NzT1_pct * sRGB.shape[2])]
+            plotSlice = tissue_constrained_fod[:,:,int(NzT1_pct * tissue_constrained_fod.shape[2])]
             plt.imshow(plotSlice)
             plt.title('Original - main eigenvector')
             plt.show()
             plt.title('Low res - main eigenvector')
-            plotSlice = sRGB_low_res[:,:,int(NzT1_pct * sRGB_low_res.shape[2])]
+            plotSlice = low_res_tissue_constrained_fod[:,:,int(NzT1_pct * low_res_tissue_constrained_fod.shape[2])]
             plt.imshow(plotSlice)
             plt.colorbar()
             plt.show()
 
-            plt.hist(sRGB[sRGB >0].flatten(), bins=100)
+            plt.hist(tissue_constrained_fod[tissue_constrained_fod >0].flatten(), bins=100)
             plt.title('low res larger then zero')
             plt.show()
-            nib.save(nib.Nifti1Image(sRGB_low_res, np.eye(4)), 'sRGB_low_res.nii.gz')
+            nib.save(nib.Nifti1Image(low_res_tissue_constrained_fod, np.eye(4)), 'sRGB_low_res.nii.gz')
         # Assuming sGM_low_res is already computed using scipy.ndimage.zoom
-        original_shape = sRGB_low_res.shape
-        new_shape =  sRGB.shape[:3]
+        original_shape = low_res_tissue_constrained_fod.shape
+        new_shape =  tissue_constrained_fod.shape[:3]
         
         # Calculate the zoom factor for each dimension
         extrapolate_factor = tuple(new_sz / float(orig_sz) for new_sz, orig_sz in zip(new_shape, original_shape))
 
         # Update grid size and steps for low resolution
-        Nx, Ny, Nz = sRGB_low_res.shape[:3]
+        Nx, Ny, Nz = low_res_tissue_constrained_fod.shape[:3]
 
         # Adjust grid steps based on zoom factor
         dx = dx_mm / res_factor
@@ -277,7 +285,7 @@ class FK_FOD_Solver(FK_Solver):
         NzT1 = int(NzT1_pct * Nz)
 
         #stability condition \Delta t \leq \min \left( \frac{\Delta x^2}{6 D_{\text{max}}}, \frac{1}{\rho} \right)
-        Nt = np.max([stopping_time * Dw * np.max(sRGB)/np.power((np.min([dx,dy,dz])),2)*8 + 100, stopping_time * f *1.1 ]) 
+        Nt = np.max([stopping_time * Dw * np.max(tissue_constrained_fod)/np.power((np.min([dx,dy,dz])),2)*8 + 100, stopping_time * f *1.1 ]) 
         dt = stopping_time/Nt
         N_simulation_steps = int(np.ceil(Nt))
         if verbose: 
@@ -290,12 +298,12 @@ class FK_FOD_Solver(FK_Solver):
         col_res[0] = copy.deepcopy(A) #init
         
         #cropping
-        brainmask = np.max(sRGB_low_res, axis = -1) > 0.00001
+        brainmask = np.max(low_res_tissue_constrained_fod, axis = -1) > 0.00001
 
-        cropped_RGB, A, (min_coords, max_coords) = self.crop_tissues_and_tumor(sRGB_low_res, A, brainmask, margin=2, threshold=0.5)
+        cropped_FOD, A, (min_coords, max_coords) = self.crop_tissues_and_tumor(low_res_tissue_constrained_fod, A, brainmask, margin=2, threshold=0.5)
         
         # Simulation code
-        D_domain = self.get_D_from_DTI(cropped_RGB, Dw)
+        D_domain = self.get_D_from_FOD(cropped_FOD, Dw)
 
         result = {}
         
@@ -308,80 +316,80 @@ class FK_FOD_Solver(FK_Solver):
             record_steps = np.linspace(0, N_simulation_steps - 1, time_series_solution_Nt, dtype=int)
 
         #print("debug start simulation")
-        try:
-            finalTime = None
-            result['success'] = False
+        # try:
+        finalTime = None
+        result['success'] = False
+        
+        #check if origin within brainmask
+        if not brainmask[NxT1, NyT1, NzT1]:
+            raise ValueError("Origin not within brainmask")
+        
+        for t in range(N_simulation_steps):
+            A_Old_size = np.sum(A)
+            oldA = copy.deepcopy(A)
+            A = self.FK_update(A, D_domain, f, dt, dx, dy, dz)
+            #A = np.abs(A)
+            volume = dx * dy * dz * np.sum(A)
+            if volume >= stopping_volume:
+                finalTime = t * dt
+                break
             
-            #check if origin within brainmask
-            if not brainmask[NxT1, NyT1, NzT1]:
-                raise ValueError("Origin not within brainmask")
-            
-            for t in range(N_simulation_steps):
-                A_Old_size = np.sum(A)
-                oldA = copy.deepcopy(A)
-                A = self.FK_update(A, D_domain, f, dt, dx, dy, dz)
-                #A = np.abs(A)
-                volume = dx * dy * dz * np.sum(A)
-                if volume >= stopping_volume:
-                    finalTime = t * dt
-                    break
-                
-                diffA = np.sum(A) - A_Old_size
-                if  diffA < -10:
-                    print("Tumor is shrinking at time", t*dt, "by", diffA)
-                    result['success'] = False
-                    break
+            diffA = np.sum(A) - A_Old_size
+            if  diffA < -10:
+                print("Tumor is shrinking at time", t*dt, "by", diffA)
+                result['success'] = False
+                break
 
-                if volume < 0.000001:
-                    print("Volume is to small")
-                    result['success'] = False
-                    break
+            if volume < 0.000001:
+                print("Volume is to small")
+                result['success'] = False
+                break
 
-                if verbose and t % 1000 == 0:
-                    imshow_slice = cropped_RGB[:,:,int(NzT1_pct * A.shape[2])]
-                    imshow_slice /= np.max(imshow_slice)
-                    from matplotlib import pyplot as plt   
+            # if verbose and t % 1000 == 0:
+            #     imshow_slice = cropped_FOD[:,:,int(NzT1_pct * A.shape[2]), 0]
+            #     imshow_slice /= np.max(imshow_slice)
+            #     from matplotlib import pyplot as plt   
 
-                    plt.imshow(imshow_slice)
-                    plt.imshow(A[:,:,int(NzT1_pct * A.shape[2])], alpha=0.5*(A[:,:,int(NzT1_pct * A.shape[2])]>0.001), cmap='hot', vmin=0, vmax=1)
-                    plt.show()
-                    if diffA < 0:
-                        print("Tumor is shrinking at time", t*dt, "by", diffA)
-                        #plt.imshow(imshow_slice)
-                        diffAIMG = np.abs(A - oldA)
-                        comz = scipy.ndimage.measurements.center_of_mass(diffAIMG)[2]
-                        plt.imshow(diffAIMG[:,:,int(comz)], alpha=0.5*(diffAIMG[:,:,int(comz)]>0.001), cmap='hot')
-                        plt.title("Diff")
-                        plt.show()
+            #     plt.imshow(imshow_slice)
+            #     plt.imshow(A[:,:,int(NzT1_pct * A.shape[2])], alpha=0.5*(A[:,:,int(NzT1_pct * A.shape[2])]>0.001), cmap='hot', vmin=0, vmax=1)
+            #     plt.show()
+            #     if diffA < 0:
+            #         print("Tumor is shrinking at time", t*dt, "by", diffA)
+            #         #plt.imshow(imshow_slice)
+            #         diffAIMG = np.abs(A - oldA)
+            #         comz = scipy.ndimage.measurements.center_of_mass(diffAIMG)[2]
+            #         plt.imshow(diffAIMG[:,:,int(comz)], alpha=0.5*(diffAIMG[:,:,int(comz)]>0.001), cmap='hot')
+            #         plt.title("Diff")
+            #         plt.show()
 
-                # Record data at specified steps
-                if time_series_data is not None:
-                    if t in record_steps:
-                        time_series_data.append(copy.deepcopy(A))
-            
-            if finalTime is None:
-                finalTime = stopping_time
-            
-            # Process final state
-            A = self.restore_tumor(sRGB_low_res.shape[:3], A, (min_coords, max_coords))
-            col_res[1] = copy.deepcopy(A)  # final
+            # Record data at specified steps
+            if time_series_data is not None:
+                if t in record_steps:
+                    time_series_data.append(copy.deepcopy(A))
+        
+        if finalTime is None:
+            finalTime = stopping_time
+        
+        # Process final state
+        A = self.restore_tumor(low_res_tissue_constrained_fod.shape[:3], A, (min_coords, max_coords))
+        col_res[1] = copy.deepcopy(A)  # final
 
-            # Save results in the result dictionary
-            result['initial_state'] = np.array(zoom(col_res[0], extrapolate_factor, order=1))
-            result['final_state'] = np.array(zoom(col_res[1], extrapolate_factor, order=1))
-            result['final_time'] = finalTime
-            result['final_volume'] = volume
-            result['stopping_criteria'] = 'volume' if volume >= stopping_volume else 'time'
-            result['time_series'] = np.array([zoom(self.restore_tumor(sRGB_low_res.shape[:3], state, (min_coords, max_coords)), extrapolate_factor, order=1) for state in time_series_data]) if time_series_data is not None else None
-            result['Dw'] = Dw
-            result['rho'] = f
-            result['success'] = True
+        # Save results in the result dictionary
+        result['initial_state'] = np.array(zoom(col_res[0], extrapolate_factor, order=1))
+        result['final_state'] = np.array(zoom(col_res[1], extrapolate_factor, order=1))
+        result['final_time'] = finalTime
+        result['final_volume'] = volume
+        result['stopping_criteria'] = 'volume' if volume >= stopping_volume else 'time'
+        result['time_series'] = np.array([zoom(self.restore_tumor(low_res_tissue_constrained_fod.shape[:3], state, (min_coords, max_coords)), extrapolate_factor, order=1) for state in time_series_data]) if time_series_data is not None else None
+        result['Dw'] = Dw
+        result['rho'] = f
+        result['success'] = True
             
                     
-        except Exception as e:
-            print(e)
-            result['error'] = str(e)
-            result['success'] = False
+        # except Exception as e:
+        #     print(e)
+        #     result['error'] = str(e)
+        #     result['success'] = False
 
         return result
 
