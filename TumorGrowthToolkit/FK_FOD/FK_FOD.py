@@ -8,6 +8,7 @@ from scipy.ndimage import binary_dilation
 import nibabel as nib
 import matplotlib.pyplot as plt
 import itertools
+from .utils import get_direction_to_index
 
 '''
 Forward solver DTI 
@@ -84,8 +85,7 @@ class FK_FOD_Solver(FK_Solver):
         The values correspond to the average amplitude of the FOD segment corresponding to that direction. 
         '''
 
-        dirs_26 = {(x, y, z): idx for idx, (x, y, z) in enumerate(itertools.product((-1, 0, 1), (-1, 0, 1), (-1, 0, 1)))
-                        if not (x == 0 and y == 0 and z == 0)}
+        dirs_26 = get_direction_to_index()
 
         D = {}
         
@@ -249,21 +249,25 @@ class FK_FOD_Solver(FK_Solver):
 
         if doPlot:           
             from matplotlib import pyplot as plt   
+            from .utils import extract_dominant_discrete_orientation
+            fod_dominant = extract_dominant_discrete_orientation(tissue_constrained_fod)
 
-            plotSlice = tissue_constrained_fod[:,:,int(NzT1_pct * tissue_constrained_fod.shape[2])]
+            plotSlice = np.abs(fod_dominant[:,120,:])
             plt.imshow(plotSlice)
             plt.title('Original - main eigenvector')
             plt.show()
-            plt.title('Low res - main eigenvector')
-            plotSlice = low_res_tissue_constrained_fod[:,:,int(NzT1_pct * low_res_tissue_constrained_fod.shape[2])]
-            plt.imshow(plotSlice)
-            plt.colorbar()
-            plt.show()
+            # plt.title('Low res - main eigenvector')
 
-            plt.hist(tissue_constrained_fod[tissue_constrained_fod >0].flatten(), bins=100)
-            plt.title('low res larger then zero')
-            plt.show()
-            nib.save(nib.Nifti1Image(low_res_tissue_constrained_fod, np.eye(4)), 'sRGB_low_res.nii.gz')
+            # low_res_fod_dominant = extract_dominant_discrete_orientation(low_res_tissue_constrained_fod)
+            # plotSlice = low_res_fod_dominant[:,:,int(NzT1_pct * low_res_tissue_constrained_fod.shape[2])]
+            # plt.imshow(plotSlice)
+            # plt.colorbar()
+            # plt.show()
+
+            # plt.hist(tissue_constrained_fod[tissue_constrained_fod >0].flatten(), bins=100)
+            # plt.title('low res larger then zero')
+            # plt.show()
+            # nib.save(nib.Nifti1Image(low_res_tissue_constrained_fod, np.eye(4)), 'sRGB_low_res.nii.gz')
         # Assuming sGM_low_res is already computed using scipy.ndimage.zoom
         original_shape = low_res_tissue_constrained_fod.shape
         new_shape =  tissue_constrained_fod.shape[:3]
