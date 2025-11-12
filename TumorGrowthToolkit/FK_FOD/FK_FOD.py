@@ -51,10 +51,10 @@ class FK_FOD_Solver(FK_Solver):
             print('set gm to uniform and wm to DTI')
             csfMask = np.logical_and(wm <= 0, gm <= 0)
             output[csfMask] = 0 
-            gmThreshold =   1.0 / ratioDw_Dg  
+            gmThreshold = 1.0 / ratioDw_Dg  
             output[gm > 0 ] = gmThreshold # fix gray matter
-            borderMask = binary_dilation(csfMask, iterations = 1)
-            output[borderMask] = 0
+            # borderMask = binary_dilation(csfMask, iterations = 1)
+            # output[borderMask] = 0
             #clip wm to lowest gm
             output[np.logical_and(np.repeat((wm > 0)[..., np.newaxis], repeats=output.shape[-1], axis=-1), output < gmThreshold)] = gmThreshold
 
@@ -107,6 +107,15 @@ class FK_FOD_Solver(FK_Solver):
         D["D-y+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(0, -1, 1)]]
         D["D+y-z"] = Dw * cubed_FOD[:,:,:,dirs_26[(0, 1, -1)]]
         D["D+y+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(0, 1, 1)]] 
+        D["D+x+y+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(1, 1, 1)]]
+        D["D+x+y-z"] = Dw * cubed_FOD[:,:,:,dirs_26[(1, 1, -1)]]
+        D["D+x-y+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(1, -1, 1)]]
+        D["D+x-y-z"] = Dw * cubed_FOD[:,:,:,dirs_26[(1, -1, -1)]]
+        D["D-x+y+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(-1, 1, 1)]]
+        D["D-x+y-z"] = Dw * cubed_FOD[:,:,:,dirs_26[(-1, 1, -1)]]
+        D["D-x-y+z"] = Dw * cubed_FOD[:,:,:,dirs_26[(-1, -1, 1)]]
+        D["D-x-y-z"] = Dw * cubed_FOD[:,:,:,dirs_26[(-1, -1, -1)]]
+        
 
         # FIXME: adjust plotting
         # if self.doPlot:
@@ -142,10 +151,30 @@ class FK_FOD_Solver(FK_Solver):
         SP_x = 1/(dx*dx) * (D["D_plus_x"]* (np.roll(A,1,axis=0) - A) - D["D_minus_x"]* (A - np.roll(A,-1,axis=0)) )
         SP_y = 1/(dy*dy) * (D["D_plus_y"]* (np.roll(A,1,axis=1) - A) - D["D_minus_y"]* (A - np.roll(A,-1,axis=1)) )
         SP_z = 1/(dz*dz) * (D["D_plus_z"]* (np.roll(A,1,axis=2) - A) - D["D_minus_z"]* (A - np.roll(A,-1,axis=2)) )
-        SP_xy = 1 / (4*dx*dy) * (D["D+x+y"] * np.roll(np.roll(A,1,axis=0),1,axis=1) - D["D+x-y"] * np.roll(np.roll(A,1,axis=0),-1,axis=1) - D["D-x+y"] * np.roll(np.roll(A,-1,axis=0),1,axis=1) + D["D-x-y"] * np.roll(np.roll(A,-1,axis=0),-1,axis=1))
-        SP_xz = 1 / (4*dx*dz) * (D["D+x+z"] * np.roll(np.roll(A,1,axis=0),1,axis=2) - D["D+x-z"] * np.roll(np.roll(A,1,axis=0),-1,axis=2) - D["D-x+z"] * np.roll(np.roll(A,-1,axis=0),1,axis=2) + D["D-x-z"] * np.roll(np.roll(A,-1,axis=0),-1,axis=2))
-        SP_yz = 1 / (4*dy*dz) * (D["D+y+z"] * np.roll(np.roll(A,1,axis=1),1,axis=2) - D["D+y-z"] * np.roll(np.roll(A,1,axis=1),-1,axis=2) - D["D-y+z"] * np.roll(np.roll(A,-1,axis=1),1,axis=2) + D["D-y-z"] * np.roll(np.roll(A,-1,axis=1),-1,axis=2))
-        SP = SP_x + SP_y + SP_z + 2 * (SP_xy + SP_xz + SP_yz)
+        
+        SP_pxpy0z = 1/(dx*dy) * (D["D+x+y"] * (np.roll(np.roll(A,1,axis=0),1,axis=1) - A) - D["D-x-y"] * (A - np.roll(np.roll(A,-1,axis=0),-1,axis=1)))
+        SP_pxmy0z = 1/(dx*dy) * (D["D+x-y"] * (np.roll(np.roll(A,1,axis=0),-1,axis=1) - A) - D["D-x+y"] * (A - np.roll(np.roll(A,-1,axis=0),1,axis=1)))
+        
+        SP_px0ypz = 1/(dx*dz) * (D["D+x+z"] * (np.roll(np.roll(A,1,axis=0),1,axis=2) - A) - D["D-x-z"] * (A - np.roll(np.roll(A,-1,axis=0),-1,axis=2)))
+        SP_px0ymz = 1/(dx*dz) * (D["D+x-z"] * (np.roll(np.roll(A,1,axis=0),-1,axis=2) - A) - D["D-x+z"] * (A - np.roll(np.roll(A,-1,axis=0),1,axis=2)))
+        
+        SP_0xpypz = 1/(dy*dz) * (D["D+y+z"] * (np.roll(np.roll(A,1,axis=1),1,axis=2) - A) - D["D-y-z"] * (A - np.roll(np.roll(A,-1,axis=1),-1,axis=2)))
+        SP_0xpymz = 1/(dx*dy) * (D["D+y-z"] * (np.roll(np.roll(A,1,axis=1),-1,axis=2) - A) - D["D-y+z"] * (A - np.roll(np.roll(A,-1,axis=1),1,axis=2)))
+
+        SP_pxpypz = 1/(dx*dy*dz) * (D["D+x+y+z"] * (np.roll(np.roll(np.roll(A,1,axis=0),1,axis=1),1,axis=2) - A) 
+                                    - D["D-x-y-z"] * (A - np.roll(np.roll(np.roll(A,-1,axis=0),-1,axis=1),-1,axis=2)))
+        SP_pxpymz = 1/(dx*dy*dz) * (D["D+x+y-z"] * (np.roll(np.roll(np.roll(A,1,axis=0),1,axis=1),-1,axis=2) - A)
+                                    - D["D-x-y+z"] * (A - np.roll(np.roll(np.roll(A,-1,axis=0),-1,axis=1),1,axis=2)))
+        SP_pxmypz = 1/(dx*dy*dz) * (D["D+x-y+z"] * (np.roll(np.roll(np.roll(A,1,axis=0),-1,axis=1),1,axis=2) - A)
+                                    - D["D-x+y-z"] * (A - np.roll(np.roll(np.roll(A,-1,axis=0),1,axis=1),-1,axis=2)))
+        SP_mxpypz = 1/(dx*dy*dz) * (D["D-x+y+z"] * (np.roll(np.roll(np.roll(A,-1,axis=0),1,axis=1),1,axis=2) - A)
+                                    - D["D+x-y-z"] * (A - np.roll(np.roll(np.roll(A,1,axis=0),-1,axis=1),-1,axis=2)))
+        
+        # SP_xy = 1 / (4*dx*dy) * (D["D+x+y"] * np.roll(np.roll(A,1,axis=0),1,axis=1) - D["D+x-y"] * np.roll(np.roll(A,1,axis=0),-1,axis=1) - D["D-x+y"] * np.roll(np.roll(A,-1,axis=0),1,axis=1) + D["D-x-y"] * np.roll(np.roll(A,-1,axis=0),-1,axis=1))
+        # SP_xz = 1 / (4*dx*dz) * (D["D+x+z"] * np.roll(np.roll(A,1,axis=0),1,axis=2) - D["D+x-z"] * np.roll(np.roll(A,1,axis=0),-1,axis=2) - D["D-x+z"] * np.roll(np.roll(A,-1,axis=0),1,axis=2) + D["D-x-z"] * np.roll(np.roll(A,-1,axis=0),-1,axis=2))
+        # SP_yz = 1 / (4*dy*dz) * (D["D+y+z"] * np.roll(np.roll(A,1,axis=1),1,axis=2) - D["D+y-z"] * np.roll(np.roll(A,1,axis=1),-1,axis=2) - D["D-y+z"] * np.roll(np.roll(A,-1,axis=1),1,axis=2) + D["D-y-z"] * np.roll(np.roll(A,-1,axis=1),-1,axis=2))
+        # SP = SP_x + SP_y + SP_z + 2 * (SP_xy + SP_xz + SP_yz)
+        SP = SP_x + SP_y + SP_z + SP_pxpy0z + SP_pxmy0z + SP_px0ypz + SP_px0ymz + SP_0xpypz + SP_0xpymz + SP_pxpypz + SP_pxpymz + SP_pxmypz + SP_mxpypz
         diff_A = (SP + f*np.multiply(A,1-A)) * dt
         A += diff_A
         return A
@@ -154,7 +183,7 @@ class FK_FOD_Solver(FK_Solver):
     def crop_tissues_and_tumor(self, tissue, tumor_initial, brainmask,  margin=2, threshold=0.0):
         """
         Crop Tissue and tumor_initial such that we remove the maximal amount of voxels
-        where the tissue is lower than the threshold.
+        where the tissue is lower than0 the threshold.
         A margin is left around the tissues.
 
         :param Tissue: 4D numpy array of diffusion direction (RGB file)
@@ -252,7 +281,9 @@ class FK_FOD_Solver(FK_Solver):
             from .utils import extract_dominant_discrete_orientation
             fod_dominant = extract_dominant_discrete_orientation(tissue_constrained_fod)
 
-            plotSlice = np.abs(fod_dominant[:,120,:])
+            # plotSlice = np.abs(fod_dominant[:,120,:])
+            plotSlice = fod_dominant[:,:,int(NzT1_pct * fod_dominant.shape[2])]
+
             plt.imshow(plotSlice)
             plt.title('Original - main eigenvector')
             plt.show()
@@ -332,7 +363,11 @@ class FK_FOD_Solver(FK_Solver):
             A_Old_size = np.sum(A)
             oldA = copy.deepcopy(A)
             A = self.FK_update(A, D_domain, f, dt, dx, dy, dz)
-            #A = np.abs(A)
+            # if t % 100 == 0:
+            #     plt.imshow((A-oldA)[:,:,NzT1])
+            #     plt.title(f"Update at step {t}")
+            #     plt.show()
+            A = np.abs(A)
             volume = dx * dy * dz * np.sum(A)
             if volume >= stopping_volume:
                 finalTime = t * dt
