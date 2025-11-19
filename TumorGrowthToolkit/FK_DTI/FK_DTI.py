@@ -225,7 +225,6 @@ class FK_DTI_Solver(FK_Solver):
 
         if doPlot:
                         
-                        
             from matplotlib import pyplot as plt   
 
             plotSlice = sRGB[:,:,int(NzT1_pct * sRGB.shape[2])]

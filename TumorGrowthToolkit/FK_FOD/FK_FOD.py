@@ -35,9 +35,9 @@ class FK_FOD_Solver(FK_Solver):
         brainMask = np.max(output, axis=-1) > 0
 
         # if wm is not None:
-        #     normalizationMask = wm > 0
+        normalizationMask = wm > 0
         # else:
-        #     normalizationMask = brainMask
+            # normalizationMask = brainMask
 
         # if desiredSTD is not None:
         #     output[brainMask] -= np.mean(output[normalizationMask])
@@ -45,7 +45,7 @@ class FK_FOD_Solver(FK_Solver):
         #     output[brainMask] *= desiredSTD
         #     output[brainMask] += 1
         # else:
-        #     output[brainMask] /= np.mean(output[normalizationMask])
+        # output[brainMask] /= np.mean(output[normalizationMask])
 
         if not (wm is None or gm  is None or ratioDw_Dg is None):
             print('set gm to uniform and wm to DTI')

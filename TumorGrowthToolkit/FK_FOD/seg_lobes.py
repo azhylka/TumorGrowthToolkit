@@ -24,7 +24,6 @@ def average_segment(segment_vectors, amplitudes):
 def neighborhood_directions(sphere_amps, dirs, dir_segment):
     segments = np.sort(np.unique(dir_segment))
     segment_orientations = np.zeros((sphere_amps.shape[0], len(segments), 3))
-    segment_amplitudes = np.zeros((sphere_amps.shape[0], len(segments)))
     for idx, segment in enumerate(segments):
         segment_mask = dir_segment == segment
         seg_dirs = dirs[segment_mask]
@@ -53,12 +52,13 @@ def tqdm_joblib(tqdm_object):
 if __name__ == "__main__":
 
     print("Loading data...")
-    sphere_amps_img = nib.load('HCP1065_FOD_sphere362_space-sri.nii.gz')
+    # sphere_amps_img = nib.load('HCP1065_FOD_sphere362_space-sri.nii.gz')
+    sphere_amps_img = nib.load('/Users/azhylka/Projects/TUMor_Data/HCP/100307/wmfod_norm_sphere362.nii.gz')
     print(f"Reshaping data into {(-1,)+ sphere_amps_img.shape[-2:]}...")
     sphere_amps = sphere_amps_img.get_fdata().reshape((-1,)+ sphere_amps_img.shape[-2:])
 
     print("Loading directions...")
-    dirs = np.loadtxt('sphere362.txt')
+    dirs = np.loadtxt('/Users/azhylka/Projects/TumorGrowthToolkit/TumorGrowthToolkit/FK_FOD/sphere362.txt')
     dirs /= np.linalg.norm(dirs, axis=1)[:, None]
 
     # all combinations of -1, 0, 1 except (0,0,0)
@@ -85,9 +85,13 @@ if __name__ == "__main__":
     
     odf_26dir = list(map(lambda x: np.expand_dims(np.reshape(x, sphere_amps_img.shape[:2]+x.shape[-2:]),axis=2), odf_26dir))
     odf_26dir = np.concatenate(odf_26dir, axis=2)
-    nib.save(nib.Nifti1Image(odf_26dir, affine=sphere_amps_img.affine), 'HCP1065_FOD_sphere362_segmented.nii.gz')
+    nib.save(nib.Nifti1Image(odf_26dir, affine=sphere_amps_img.affine), 
+             '/Users/azhylka/Projects/TUMor_Data/HCP/100307/wmfod_norm_sphere362_segmented.nii.gz')
+            #   'HCP1065_FOD_sphere362_segmented.nii.gz')
     amplitudes = np.linalg.norm(odf_26dir, axis=-1)
-    nib.save(nib.Nifti1Image(amplitudes, affine=sphere_amps_img.affine), 'HCP1065_FOD_sphere362_segmented_amps.nii.gz')
+    nib.save(nib.Nifti1Image(amplitudes, affine=sphere_amps_img.affine), 
+             '/Users/azhylka/Projects/TUMor_Data/HCP/100307/wmfod_norm_sphere362_segmented_amps.nii.gz')
+            #  'HCP1065_FOD_sphere362_segmented_amps.nii.gz')
     
     # fig = plt.figure(figsize=(6, 6))
     # ax = fig.add_subplot(111, projection='3d')

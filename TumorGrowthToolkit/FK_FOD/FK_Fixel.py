@@ -31,9 +31,6 @@ class FK_Fixel_Solver(FK_Solver):
 
         upper_limit = self.params.get('relative_upper_limit_DTI', 2)
         lower_limit = self.params.get('relative_lower_limit_DTI', 0)
-        output = np.copy(tensor)
-
-        brainMask = np.max(output, axis=-1) > 0
 
         # if wm is not None:
         #     normalizationMask = wm > 0
@@ -48,28 +45,32 @@ class FK_Fixel_Solver(FK_Solver):
         # else:
         #     output[brainMask] /= np.mean(output[normalizationMask])
 
-        if not (wm is None or gm  is None or ratioDw_Dg is None):
-            print('set gm to uniform and wm to DTI')
-            csfMask = np.logical_and(wm <= 0, gm <= 0)
-            output[csfMask] = 0 
-            gmThreshold = 1.0 / ratioDw_Dg  
-            output[gm > 0 ] = gmThreshold # fix gray matter
-            # borderMask = binary_dilation(csfMask, iterations = 1)
-            # output[borderMask] = 0
-            #clip wm to lowest gm
-            output[np.logical_and(np.repeat((wm > 0)[..., np.newaxis], repeats=output.shape[-1], axis=-1), output < gmThreshold)] = gmThreshold
+        for D_key, D_flow in D_domain.iteritems():
+            output = np.copy(D_flow)
 
-        # output[output<0] = 0
-        # FIXME does it make sense to use exponent?
-        output = output ** exponent + linear * output
+            if not (wm is None or gm  is None or ratioDw_Dg is None):
+            
+                print('set gm to uniform and wm to DTI')
+                csfMask = np.logical_and(wm <= 0, gm <= 0)
+                output[csfMask] = 0 
+                gmThreshold = 1.0 / ratioDw_Dg  
+                output[gm > 0 ] = gmThreshold # fix gray matter
+                # borderMask = binary_dilation(csfMask, iterations = 1)
+                # output[borderMask] = 0
+                #clip wm to lowest gm
+                output[np.logical_and(np.repeat((wm > 0)[..., np.newaxis], repeats=output.shape[-1], axis=-1), output < gmThreshold)] = gmThreshold
 
-        output[output>upper_limit] = upper_limit
-        output[output<0] = 0
-        output[np.logical_and( 
-                    np.repeat((brainMask > 0)[..., np.newaxis], repeats=output.shape[-1], axis=-1),
-                    output < lower_limit)] = lower_limit
+            # output[output<0] = 0
+            # FIXME does it make sense to use exponent?
+            output = output ** exponent + linear * output
 
-        return output
+            output = np.clip(output, 0, upper_limit)
+            # output[np.logical_and( 
+            #             np.repeat((brainMask > 0)[..., np.newaxis], repeats=output.shape[-1], axis=-1),
+            #             output < lower_limit)] = lower_limit
+            D_domain[D_key] = output
+
+        return D_domain
 
     # def m_Tildas(self, rgbImg):
         
@@ -96,7 +97,7 @@ class FK_Fixel_Solver(FK_Solver):
                 for offset_idx, offset in enumerate([-1, 1]):
                     neighbors = closest_neighbors[..., axis*2+offset_idx]
                     D_key = f'D{fixel}_{["minus","plus"][offset_idx==1]}_{["x","y","z"][axis]}'
-                    D[D_key] = (fixels[..., axis] + neighbors[..., axis]) / 2 # this way it is actually the flow through the face between voxels
+                    D[D_key] = (np.abs(fixels[..., axis]) + np.abs(neighbors[..., axis])) / 2 # this way it is actually the flow through the face between voxels
         
         return D
     

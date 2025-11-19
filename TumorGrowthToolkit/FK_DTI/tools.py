@@ -108,6 +108,23 @@ def get_tensor_from_lower6(lower6):
 
     return tensor
 
+def get_tensor_from_lower6_mrtrix(lower6):
+    #[dxx, dxy, dyy, dxz, dyz, dzz]
+
+    tensor  = np.zeros(lower6.shape[0:3] + (3,3))#.astype(np.string_) for testing
+    print(tensor.shape)
+    tensor[..., 0, 0] = lower6[..., 0]
+    tensor[..., 1, 1] = lower6[..., 1]
+    tensor[..., 2, 2] = lower6[..., 2]
+    tensor[..., 0, 1] = lower6[..., 3]
+    tensor[..., 1, 0] = lower6[..., 3]
+    tensor[..., 0, 2] = lower6[..., 4]
+    tensor[..., 2, 0] = lower6[..., 4]
+    tensor[..., 1, 2] = lower6[..., 5]
+    tensor[..., 2, 1] = lower6[..., 5]
+
+    return tensor
+
 
 def elongate_tensor_along_main_axis_torch(tensor_arrayNP, scale_factor):
     import  torch
