@@ -1,4 +1,5 @@
 from TumorGrowthToolkit.FK_FOD import FK_FOD_Solver
+from TumorGrowthToolkit.FK_FOD import FK_Fixel_Solver
 from TumorGrowthToolkit.FK_DTI import FK_DTI_Solver
 from TumorGrowthToolkit.FK import Solver as FK_Solver
 import numpy as np
@@ -107,6 +108,41 @@ def get_FK_FOD_solution(x, y, z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale
     return result
 
 
+
+def get_FK_Fixel_solution(x, y, z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume):
+    fixel_dir = '/Users/azhylka/Projects/TUMor_Data/HCP/100307/fixels'
+
+    parameters = {
+        'Dw': dw,          # maximum diffusion coefficient
+        'rho': rho,            # Proliferation rate
+        'gm' : gm,
+        'wm' : wm,    # Proliferation rate
+        'fixel_dir': fixel_dir, # diffusion tissue map as shown above
+        'diffusionTensorExponent': 1, # exponent for the diffusion tensor, 1.0 for linear relationship
+        'diffusionEllipsoidScaling':1,#21.713178343886213,
+        'NxT1_pct': x,    # tumor position [%]
+        'NyT1_pct': y,
+        'NzT1_pct': z,
+        'init_scale': init_scale, #scale of the initial gaussian
+        'resolution_factor': resolution_factor, #resultion scaling for calculations
+        'verbose': True, #printing timesteps 
+        'time_series_solution_Nt': 64, # number of timesteps in the output
+        'stopping_volume': stoppingVolume,
+        'stopping_time': 2000, # 1000
+        'use_homogen_gm': True,
+        'RatioDw_Dg': RatioDw_Dg
+    }
+
+    start_time = time.time()
+    fK_FOD_Solver = FK_Fixel_Solver(parameters)
+    result = fK_FOD_Solver.solve(doPlot=False)
+    end_time = time.time()  # Store the end time
+    execution_time = int(end_time - start_time)  # Calculate the difference
+
+    nib.save(nib.Nifti1Image(result['final_state'].astype(np.float32), affine), f'./dataset/FK_Fixel_result_{RatioDw_Dg}.nii.gz')
+    return result
+
+
 if __name__ == '__main__':
     X = 0.45
     Y = 0.3
@@ -142,6 +178,8 @@ if __name__ == '__main__':
 
     for RatioDw_Dg in Ratios_Dw_Dg:
         print('%%%%%%%\nProcessing ratio', RatioDw_Dg)
+
+        result_fixel = get_FK_Fixel_solution(X, Y, Z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume)
         
         result_FOD = get_FK_FOD_solution(X, Y, Z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume)
     
@@ -154,7 +192,7 @@ if __name__ == '__main__':
         z = int(tissue.shape[2]*Z)
 
 
-        fig, ax = plt.subplots(2,3, figsize=(12,6))
+        fig, ax = plt.subplots(2,4, figsize=(12,6))
         ax[0,0].imshow(tissue[:,:,z]>0,alpha=0.5*(tissue[:,:,z]==0), cmap='gray')
         ax[0,0].imshow(result_FOD['final_state'][:,:,z], alpha=0.5*(result_FOD['final_state'][:,:,z]>0.0001), cmap = "Reds")	
         ax[1,0].imshow(tissue[:,y,:]>0,alpha=0.5*(tissue[:,y,:]==0), cmap='gray')
@@ -175,8 +213,14 @@ if __name__ == '__main__':
         ax[1,2].imshow(resultFK['final_state'][:,y,:], alpha=0.5*(resultFK['final_state'][:,y,:]>0.0001), cmap = "Reds")	
         ax[0,2].set_title('Tumor FK')
 
+        ax[0,3].imshow(tissue[:,:,z]>0,alpha=0.5*(tissue[:,:,z]==0), cmap='gray')
+        ax[0,3].imshow(result_fixel['final_state'][:,:,z], alpha=0.5*(result_fixel['final_state'][:,:,z]>0.0001), cmap = "Reds")	
+        ax[1,3].imshow(tissue[:,y,:]>0,alpha=0.5*(tissue[:,y,:]==0), cmap='gray')
+        ax[1,3].imshow(result_fixel['final_state'][:,y,:], alpha=0.5*(result_fixel['final_state'][:,y,:]>0.0001), cmap = "Reds")	
+        ax[0,3].set_title('Tumor Fixel')
+
         # fig.colorbar()
         # plt.show()
 
-        fig.savefig(f'./dataset/fk_fod_vs_dti_vs_fk_ratioDw_Dg_{RatioDw_Dg}.png')
+        fig.savefig(f'./dataset/fk_fixel_vs_fod_vs_dti_vs_fk_ratioDw_Dg_{RatioDw_Dg}.png')
         # print('here')

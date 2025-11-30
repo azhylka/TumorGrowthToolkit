@@ -1,4 +1,3 @@
-#%%
 import numpy as np
 import os.path as osp
 import copy
@@ -12,40 +11,36 @@ import itertools
 from .utils import get_direction_to_index
 
 '''
-Forward solver DTI 
+Forward solver Fixel 
 
-1.	It was unnecessary to use the full DTI tensors, as we are simulating on a grid. So, I used the diffusion in each direction (x,y,z) within each voxel. This is equivalent to the colored DTI images.
- 
-This is how you can generate such an RGB image from DTI:  https://dipy.org/documentation/1.0.0./examples_built/reconst_dti/, but I also included one.
-
-2.	Based on those diffusion values in each direction, I changed the Fisher-Kolmogorov diffusion value along this direction ( ‘get_D_from_DTI()’ ). You can think of many ways to do this. The easiest way would be a proportional mapping, but to suppress low DTI values, I used a polynomial mapping.
-
-By Jonas Weidner - 2023 based on Michal Balcerak solver.
+Andrey Zhylka - Adapting the DTI solver written by Jonas Weidner that was based on Michal Balcerak's solver
 '''
 
 class FK_Fixel_Solver(FK_Solver):
     def __init__(self, params):
         super().__init__(params)
 
-    def filter_gm_csf(self, D_domain, exponent = 1 , linear = 0, wm = None, gm = None, ratioDw_Dg = None): #, desiredSTD = None):
+    def filter_gm_csf(self, D_domain, wm, gm, exponent = 1 , linear = 0, ratioDw_Dg = None, desiredSTD = None):
 
         upper_limit = self.params.get('relative_upper_limit_DTI', 2)
         lower_limit = self.params.get('relative_lower_limit_DTI', 0)
 
-        # if wm is not None:
-        #     normalizationMask = wm > 0
-        # else:
-        #     normalizationMask = brainMask
+        brainMask = np.logical_or(wm, gm)
+        normalizationMask = wm > 0
+        
+        if desiredSTD is not None:
+            all_values = np.stack(D_domain.values(), axis=-1)[normalizationMask]
+            all_mean = np.mean(all_values)
+            all_std = np.std(all_values)
 
-        # if desiredSTD is not None:
-        #     output[brainMask] -= np.mean(output[normalizationMask])
-        #     output[brainMask] /= np.std(output[normalizationMask])
-        #     output[brainMask] *= desiredSTD
-        #     output[brainMask] += 1
-        # else:
-        #     output[brainMask] /= np.mean(output[normalizationMask])
+            output[brainMask] -= all_values
+            output[brainMask] /= all_mean
+            output[brainMask] *= desiredSTD
+            output[brainMask] += 1
+        else:
+            output[brainMask] /= np.mean(output[normalizationMask])
 
-        for D_key, D_flow in D_domain.iteritems():
+        for D_key, D_flow in D_domain.items():
             output = np.copy(D_flow)
 
             if not (wm is None or gm  is None or ratioDw_Dg is None):
@@ -58,7 +53,7 @@ class FK_Fixel_Solver(FK_Solver):
                 # borderMask = binary_dilation(csfMask, iterations = 1)
                 # output[borderMask] = 0
                 #clip wm to lowest gm
-                output[np.logical_and(np.repeat((wm > 0)[..., np.newaxis], repeats=output.shape[-1], axis=-1), output < gmThreshold)] = gmThreshold
+                output[np.logical_and(wm > 0, output < gmThreshold)] = gmThreshold
 
             # output[output<0] = 0
             # FIXME does it make sense to use exponent?
@@ -85,7 +80,7 @@ class FK_Fixel_Solver(FK_Solver):
         D = {}
 
         for fixel in range(num_fixels):
-            fixels = nib.load(nib.Nifti1Image(osp.join(fixel_dir, f'fixel_{fixel}.nii.gz'))).get_fdata()
+            fixels = nib.load(osp.join(fixel_dir, f'fixel_{fixel}.nii.gz')).get_fdata()
             fixel_amps = nib.load(osp.join(fixel_dir, f'amp_{fixel}.nii.gz')).get_fdata()
             fixels = fixels * fixel_amps[..., np.newaxis]
 
@@ -95,15 +90,13 @@ class FK_Fixel_Solver(FK_Solver):
 
             for axis in range(3):
                 for offset_idx, offset in enumerate([-1, 1]):
-                    neighbors = closest_neighbors[..., axis*2+offset_idx]
+                    neighbors = closest_neighbors[..., axis*2+offset_idx,:]
                     D_key = f'D{fixel}_{["minus","plus"][offset_idx==1]}_{["x","y","z"][axis]}'
                     D[D_key] = (np.abs(fixels[..., axis]) + np.abs(neighbors[..., axis])) / 2 # this way it is actually the flow through the face between voxels
         
         return D
     
-    def FK_update_DTI_style(self, A, D, f, dt, dx, dy, dz, fixel_dir):
-        fixel_ratios = nib.load(osp.join(fixel_dir, 'fixel_ratios.nii.gz')).get_fdata()
-
+    def FK_update_DTI_style(self, A, D, f, dt, dx, dy, dz, fixel_ratios):
         SP = 0
         for fixel_idx in range(3):
             SP_x = 1/(dx*dx) * (D[f"D{fixel_idx}_plus_x"]* (np.roll(A,1,axis=0) - A) - D[f"D{fixel_idx}_minus_x"]* (A - np.roll(A,-1,axis=0)) )
@@ -115,35 +108,6 @@ class FK_Fixel_Solver(FK_Solver):
         diff_A = (SP + f*np.multiply(A,1-A)) * dt
         A += diff_A
         return A
-        
-    # def FK_update_dir26(self, A, D, f, dt, dx, dy, dz):
-    #     SP_x = 1/(dx*dx) * (D["D_plus_x"]* (np.roll(A,1,axis=0) - A) - D["D_minus_x"]* (A - np.roll(A,-1,axis=0)) )
-    #     SP_y = 1/(dy*dy) * (D["D_plus_y"]* (np.roll(A,1,axis=1) - A) - D["D_minus_y"]* (A - np.roll(A,-1,axis=1)) )
-    #     SP_z = 1/(dz*dz) * (D["D_plus_z"]* (np.roll(A,1,axis=2) - A) - D["D_minus_z"]* (A - np.roll(A,-1,axis=2)) )
-        
-    #     SP_pxpy0z = 1/(dx*dy) * (D["D+x+y"] * (np.roll(np.roll(A,1,axis=0),1,axis=1) - A) - D["D-x-y"] * (A - np.roll(np.roll(A,-1,axis=0),-1,axis=1)))
-    #     SP_pxmy0z = 1/(dx*dy) * (D["D+x-y"] * (np.roll(np.roll(A,1,axis=0),-1,axis=1) - A) - D["D-x+y"] * (A - np.roll(np.roll(A,-1,axis=0),1,axis=1)))
-        
-    #     SP_px0ypz = 1/(dx*dz) * (D["D+x+z"] * (np.roll(np.roll(A,1,axis=0),1,axis=2) - A) - D["D-x-z"] * (A - np.roll(np.roll(A,-1,axis=0),-1,axis=2)))
-    #     SP_px0ymz = 1/(dx*dz) * (D["D+x-z"] * (np.roll(np.roll(A,1,axis=0),-1,axis=2) - A) - D["D-x+z"] * (A - np.roll(np.roll(A,-1,axis=0),1,axis=2)))
-        
-    #     SP_0xpypz = 1/(dy*dz) * (D["D+y+z"] * (np.roll(np.roll(A,1,axis=1),1,axis=2) - A) - D["D-y-z"] * (A - np.roll(np.roll(A,-1,axis=1),-1,axis=2)))
-    #     SP_0xpymz = 1/(dx*dy) * (D["D+y-z"] * (np.roll(np.roll(A,1,axis=1),-1,axis=2) - A) - D["D-y+z"] * (A - np.roll(np.roll(A,-1,axis=1),1,axis=2)))
-
-    #     SP_pxpypz = 1/(dx*dy*dz) * (D["D+x+y+z"] * (np.roll(np.roll(np.roll(A,1,axis=0),1,axis=1),1,axis=2) - A) 
-    #                                 - D["D-x-y-z"] * (A - np.roll(np.roll(np.roll(A,-1,axis=0),-1,axis=1),-1,axis=2)))
-    #     SP_pxpymz = 1/(dx*dy*dz) * (D["D+x+y-z"] * (np.roll(np.roll(np.roll(A,1,axis=0),1,axis=1),-1,axis=2) - A)
-    #                                 - D["D-x-y+z"] * (A - np.roll(np.roll(np.roll(A,-1,axis=0),-1,axis=1),1,axis=2)))
-    #     SP_pxmypz = 1/(dx*dy*dz) * (D["D+x-y+z"] * (np.roll(np.roll(np.roll(A,1,axis=0),-1,axis=1),1,axis=2) - A)
-    #                                 - D["D-x+y-z"] * (A - np.roll(np.roll(np.roll(A,-1,axis=0),1,axis=1),-1,axis=2)))
-    #     SP_mxpypz = 1/(dx*dy*dz) * (D["D-x+y+z"] * (np.roll(np.roll(np.roll(A,-1,axis=0),1,axis=1),1,axis=2) - A)
-    #                                 - D["D+x-y-z"] * (A - np.roll(np.roll(np.roll(A,1,axis=0),-1,axis=1),-1,axis=2)))
-        
-    #     SP = SP_x + SP_y + SP_z + SP_pxpy0z + SP_pxmy0z + SP_px0ypz + SP_px0ymz + SP_0xpypz + SP_0xpymz + SP_pxpypz + SP_pxpymz + SP_pxmypz + SP_mxpypz
-    #     diff_A = (SP + f*np.multiply(A,1-A)) * dt
-    #     A += diff_A
-    #     return A
-
 
     def crop_tissues_and_tumor(self, tissue, tumor_initial, brainmask,  margin=2, threshold=0.0):
         """
@@ -166,7 +130,9 @@ class FK_Fixel_Solver(FK_Solver):
         max_coords = np.minimum(tissue_indices.max(axis=0) + margin + 1, brainmask.shape)
 
         # Cropping tissue and tumor_initial
-        cropped_tissue = tissue[min_coords[0]:max_coords[0], min_coords[1]:max_coords[1], min_coords[2]:max_coords[2]]
+        cropped_tissue = {}
+        for k, v in tissue.items():
+            cropped_tissue[k] = v[min_coords[0]:max_coords[0], min_coords[1]:max_coords[1], min_coords[2]:max_coords[2]]
     
         cropped_tumor_initial = tumor_initial[min_coords[0]:max_coords[0], min_coords[1]:max_coords[1], min_coords[2]:max_coords[2]]
 
@@ -224,25 +190,30 @@ class FK_Fixel_Solver(FK_Solver):
             ratioDw_Dg = self.params.get('RatioDw_Dg', 10.)
 
             # TODO fix tools...
-            D_domain = self.filter_gm_csf(D_domain, exponent = diffusionTensorExponent , linear = diffusionTensorLinear, 
-                                      wm = sWM, gm = sGM, ratioDw_Dg = ratioDw_Dg) #, desiredSTD = desiredSTD)
+            D_domain = self.filter_gm_csf(D_domain, wm = sWM, gm = sGM, exponent = diffusionTensorExponent , linear = diffusionTensorLinear, 
+                                      ratioDw_Dg = ratioDw_Dg) #, desiredSTD = desiredSTD)
         else:
             # TODO fix tools...
-            tissue_constrained_fod = self.filter_gm_csf(fod_distribution, exponent = diffusionTensorExponent , linear = diffusionTensorLinear) #, desiredSTD = desiredSTD)
+            D_domain = self.filter_gm_csf(D_domain, exponent = diffusionTensorExponent , linear = diffusionTensorLinear) #, desiredSTD = desiredSTD)
 
         # Validate input
-        assert isinstance(tissue_constrained_fod, np.ndarray), "sRGB must be a numpy array"
-        assert tissue_constrained_fod.ndim == 4, "sRGB must be a 4D numpy array, with the last dimension being 3 (RGB)"
+        assert isinstance(D_domain, dict), "sRGB must be a numpy array"
+        assert all(map(lambda x: x.ndim == 3, D_domain.values()))
         assert 0 <= NxT1_pct <= 1, "NxT1_pct must be between 0 and 1"
         assert 0 <= NyT1_pct <= 1, "NyT1_pct must be between 0 and 1"
         assert 0 <= NzT1_pct <= 1, "NzT1_pct must be between 0 and 1"
+
+        # low_res_tissue_constrained_D = zoom(D_domain, [res_factor, res_factor ,res_factor, 1] , order=1)  # Linear interpolation
+        # brainmask_low_res = zoom(np.max(low_res_tissue_constrained_fod, axis=-1) > 0.000001, res_factor, order=0)  # Nearest neighbor interpolation
+        # low_res_tissue_constrained_D[low_res_tissue_constrained_D <= 0] = 0
 
 
         # Calculate the zoom factor for each dimension
         extrapolate_factor = [1,1,1] 
 
         # Update grid size and steps for low resolution
-        Nx, Ny, Nz = low_res_tissue_constrained_fod.shape[:3]
+        # use one of the expected keywords 
+        Nx, Ny, Nz = D_domain['D0_minus_x'].shape  #low_res_tissue_constrained_D.shape[:3]
 
         # Adjust grid steps based on zoom factor
         dx = dx_mm / res_factor
@@ -255,7 +226,8 @@ class FK_Fixel_Solver(FK_Solver):
         NzT1 = int(NzT1_pct * Nz)
 
         #stability condition \Delta t \leq \min \left( \frac{\Delta x^2}{6 D_{\text{max}}}, \frac{1}{\rho} \right)
-        Nt = np.max([stopping_time * Dw * np.max(tissue_constrained_fod)/np.power((np.min([dx,dy,dz])),2)*8 + 100, stopping_time * f *1.1 ]) 
+        D_max = np.max(list(map(lambda x: x.max(), D_domain.values())))
+        Nt = np.max([stopping_time * Dw * D_max/np.power((np.min([dx,dy,dz])),2)*8 + 100, stopping_time * f *1.1 ]) 
         dt = stopping_time/Nt
         N_simulation_steps = int(np.ceil(Nt))
         if verbose: 
@@ -268,11 +240,13 @@ class FK_Fixel_Solver(FK_Solver):
         col_res[0] = copy.deepcopy(A) #init
         
         #cropping
-        brainmask = 
-        
+        brainmask = np.logical_or(sGM, sWM)
+        D_domain_cropped, A, (min_coords, max_coords) = self.crop_tissues_and_tumor(D_domain, A, brainmask,
+                                                                                     margin=2, threshold=0.5)
         # Simulation code
-
         result = {}
+        fixel_ratios = nib.load(osp.join(self.params['fixel_dir'], 'fixel_ratio_volume.nii.gz')).get_fdata()
+        cropped_fixel_ratios = fixel_ratios[min_coords[0]:max_coords[0], min_coords[1]:max_coords[1], min_coords[2]:max_coords[2]]
         
         # Initialize time series list if needed
         time_series_data = [] if time_series_solution_Nt is not None else None
@@ -293,8 +267,8 @@ class FK_Fixel_Solver(FK_Solver):
         
         for t in range(N_simulation_steps):
             A_Old_size = np.sum(A)
-            oldA = copy.deepcopy(A)
-            A = self.FK_update(A, D_domain, f, dt, dx, dy, dz)
+            # oldA = copy.deepcopy(A)
+            A = self.FK_update_DTI_style(A, D_domain_cropped, f, dt, dx, dy, dz, cropped_fixel_ratios)
             # if t % 100 == 0:
             #     plt.imshow((A-oldA)[:,:,NzT1])
             #     plt.title(f"Update at step {t}")
@@ -342,7 +316,7 @@ class FK_Fixel_Solver(FK_Solver):
             finalTime = stopping_time
         
         # Process final state
-        A = self.restore_tumor(low_res_tissue_constrained_fod.shape[:3], A, (min_coords, max_coords))
+        A = self.restore_tumor((Nx, Ny, Nz), A, (min_coords, max_coords))
         col_res[1] = copy.deepcopy(A)  # final
 
         # Save results in the result dictionary
@@ -351,7 +325,8 @@ class FK_Fixel_Solver(FK_Solver):
         result['final_time'] = finalTime
         result['final_volume'] = volume
         result['stopping_criteria'] = 'volume' if volume >= stopping_volume else 'time'
-        result['time_series'] = np.array([zoom(self.restore_tumor(low_res_tissue_constrained_fod.shape[:3], state, (min_coords, max_coords)), extrapolate_factor, order=1) for state in time_series_data]) if time_series_data is not None else None
+        result['time_series'] = np.array([zoom(self.restore_tumor((Nx, Ny, Nz), state, (min_coords, max_coords)), extrapolate_factor, order=1)
+                                           for state in time_series_data]) if time_series_data is not None else None
         result['Dw'] = Dw
         result['rho'] = f
         result['success'] = True
