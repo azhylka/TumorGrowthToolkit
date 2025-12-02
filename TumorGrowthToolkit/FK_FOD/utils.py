@@ -1,5 +1,6 @@
 import itertools
 import numpy as np
+import os
 import os.path as osp
 import nibabel as nib
 
@@ -32,11 +33,13 @@ def extract_dominant_discrete_orientation(discrete_fod_distribution):
 
 
 def create_fixel_volumes(fixel_directory, template_img_path):
+    if osp.exists(osp.join(fixel_directory, 'fixel_0.nii.gz')):
+        return
     
     template_img = nib.load(template_img_path)
     
     # Load with stride handling (get_fdata applies strides automatically)
-    fixel_amps = nib.load(osp.join(fixel_directory, 'fixel_amp.nii.gz')).get_fdata()
+    fixel_amps = nib.load(osp.join(fixel_directory, 'amp.nii.gz')).get_fdata()
     directions_img = nib.load(osp.join(fixel_directory, 'directions.nii'))
     directions = directions_img.get_fdata()
     indices = nib.load(osp.join(fixel_directory, 'index.nii')).get_fdata()
@@ -46,7 +49,7 @@ def create_fixel_volumes(fixel_directory, template_img_path):
             directions = np.flip(directions, axis=ax)
             fixel_amps = np.flip(fixel_amps, axis=ax)
 
-    max_fixels = int(np.max(indices[...,0]))
+    max_fixels = min(int(np.max(indices[...,0])), 3)
     for fixel_idx in range(max_fixels):
         mask = indices[...,0] >= fixel_idx+1
 
@@ -63,13 +66,17 @@ def create_fixel_volumes(fixel_directory, template_img_path):
         
 
 def compute_fixel_ratios(fixel_directory):
+    ratio_volume_path = osp.join(fixel_directory, f'fixel_ratio_volume.nii.gz')
+    if osp.exists(ratio_volume_path):
+        return
+    
     ratio_volume = None
     index_img = nib.load(osp.join(fixel_directory, 'index.nii'))
     indices = index_img.get_fdata() 
     ratio_volume = np.zeros(indices.shape[:-1]+(3,))
 
     for idx in np.unique(indices[...,0].astype(np.int8)):
-        if idx == 0:
+        if idx == 0 or idx > 3:
             continue
         idx -= 1
         ratio_volume[..., idx] = nib.load(osp.join(fixel_directory, f'amp_{int(idx)}.nii.gz')).get_fdata()
@@ -78,7 +85,7 @@ def compute_fixel_ratios(fixel_directory):
     ratio_volume = np.divide(ratio_volume, total_amp[..., np.newaxis], where=total_amp[..., np.newaxis]!=0)
 
     nib.save(nib.Nifti1Image(ratio_volume.astype(np.float32), affine=index_img.affine),
-             osp.join(fixel_directory, f'fixel_ratio_volume.nii.gz'))
+             ratio_volume_path)
 
         
 
@@ -89,11 +96,14 @@ def pair_closest_fixels(fixel_directory):
     Note: get_fdata() automatically applies strides from the NIfTI header,
     ensuring proper spatial scaling is accounted for during comparisons.
     """
+    if osp.exists(osp.join(fixel_directory, f'closest_fixel_0_to_fixels.nii.gz')):
+        return
+
     NEIGHBORHOOD_SIZE = 6
     index_img = nib.load(osp.join(fixel_directory, 'index.nii'))
     indices = index_img.get_fdata()
 
-    fixel_amp_img = nib.load(osp.join(fixel_directory, 'fixel_amp.nii.gz'))
+    fixel_amp_img = nib.load(osp.join(fixel_directory, 'amp.nii.gz'))
 
     for fixel_idx in range(3): # definetly not using more than 3 fixels
         fixel_img = nib.load(osp.join(fixel_directory, f'fixel_{fixel_idx}.nii.gz'))
@@ -190,9 +200,40 @@ def min_and_argmin_nibabel(img_volumes, out_min, out_argmin, use_nan_policy='ign
     return min_vol, argmin_vol
 
 
+def convert_tissue_file(data_dir):
+    output_file = osp.join(data_dir, 'transformed_tissue.nii.gz')
+    if osp.exists(output_file):
+        return
+    
+    five_tt = nib.load(osp.join(data_dir, '5tt_combined_rig_SyN.nii.gz'))
+    five_tt_segmentation = five_tt.get_fdata()
+    expected_tissue = np.zeros(five_tt.shape, dtype=np.int8)
+    expected_tissue[five_tt_segmentation == 4] = 1
+    expected_tissue[five_tt_segmentation == 5] = 1
+    expected_tissue[five_tt_segmentation == 1] = 2
+    expected_tissue[five_tt_segmentation == 2] = 2
+    expected_tissue[five_tt_segmentation == 3] = 3
+    
+    nib.save(nib.Nifti1Image(expected_tissue, affine=five_tt.affine),
+             output_file)
+
+
 if __name__ == "__main__":
-    fixel_dir = '/Users/azhylka/Projects/TUMor_Data/HCP/100307/fixels'
-    template_img = '/Users/azhylka/Projects/TUMor_Data/HCP/100307/T1w_acpc_dc_restore_1.25.nii.gz'
-    # create_fixel_volumes(fixel_dir, template_img)
-    # compute_fixel_ratios(fixel_dir)
-    pair_closest_fixels(fixel_dir)
+    # # %% Local version
+    # fixel_dir = '/Users/azhylka/Projects/TUMor_Data/HCP/100307/fixels'
+    # template_img = '/Users/azhylka/Projects/TUMor_Data/HCP/100307/T1w_acpc_dc_restore_1.25.nii.gz'
+    # # create_fixel_volumes(fixel_dir, template_img)
+    # # compute_fixel_ratios(fixel_dir)
+    # pair_closest_fixels(fixel_dir)
+
+    # %% Server version
+    data_dir = '/home/HCPTemplate2BraTS'
+    for subj_id in sorted(os.listdir(data_dir)):
+        print('%%%%')
+        print('\tProcessing', subj_id)
+        fixel_dir = osp.join(data_dir, subj_id, 'fixels')
+        template_img = osp.join(data_dir, subj_id, 'T1w_masked_rig_sri.nii.gz')
+        create_fixel_volumes(fixel_dir, template_img)
+        compute_fixel_ratios(fixel_dir)
+        pair_closest_fixels(fixel_dir)
+        convert_tissue_file(osp.join(data_dir, subj_id))
