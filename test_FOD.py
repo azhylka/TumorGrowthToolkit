@@ -10,7 +10,7 @@ import scipy.ndimage
 import nibabel as nib
 import os
 from scipy.ndimage import binary_dilation
-import TumorGrowthToolkit.FK_DTI.tools as tools
+from TumorGrowthToolkit.FK_FOD import utils
 
 
 def get_FK_solver_solution(x, y, z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume):
@@ -30,7 +30,9 @@ def get_FK_solver_solution(x, y, z, RatioDw_Dg, affine, dw, rho, gm, wm, init_sc
         'stopping_volume': stoppingVolume,
         'stopping_time': 1000,
         'use_homogen_gm': True,
-        'RatioDw_Dg': RatioDw_Dg
+        'RatioDw_Dg': RatioDw_Dg,
+        'desiredSTD': 0,
+        'cache_dir': '/Users/azhylka/Projects/TUMor_Data/HCP/100307/fixels'
     }
 
     fkSolver = FK_Solver(parametersFK)
@@ -40,7 +42,7 @@ def get_FK_solver_solution(x, y, z, RatioDw_Dg, affine, dw, rho, gm, wm, init_sc
 
 def get_FK_DTI_solution(x, y, z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume):
     tensorPath = '/Users/azhylka/Projects/TUMor_Data/HCP/100307/dt.nii.gz'
-    tissueTensor = tools.get_tensor_from_lower6_mrtrix(nib.load(tensorPath).get_fdata()[:,:,:,:])
+    tissueTensor = utils.get_tensor_from_lower6_mrtrix(nib.load(tensorPath).get_fdata()[:,:,:,:])
     tissueTensor[np.isnan(tissueTensor)] = 0
 
     parameters = {
@@ -61,7 +63,9 @@ def get_FK_DTI_solution(x, y, z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale
         'stopping_volume': stoppingVolume,
         'stopping_time': 1000,
         'use_homogen_gm': True,
-        'RatioDw_Dg': RatioDw_Dg
+        'RatioDw_Dg': RatioDw_Dg,
+        'desiredSTD': 0.3,
+        'cache_dir': '/Users/azhylka/Projects/TUMor_Data/HCP/100307/fixels'
     }
 
     dtiSolver = FK_DTI_Solver(parameters)
@@ -95,7 +99,8 @@ def get_FK_FOD_solution(x, y, z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale
         'stopping_volume': stoppingVolume,
         'stopping_time': 2000, # 1000
         'use_homogen_gm': True,
-        'RatioDw_Dg': RatioDw_Dg
+        'RatioDw_Dg': RatioDw_Dg,
+        'desiredSTD': 0.3
     }
 
     start_time = time.time()
@@ -130,7 +135,9 @@ def get_FK_Fixel_solution(x, y, z, RatioDw_Dg, affine, dw, rho, gm, wm, init_sca
         'stopping_volume': stoppingVolume,
         'stopping_time': 2000, # 1000
         'use_homogen_gm': True,
-        'RatioDw_Dg': RatioDw_Dg
+        'RatioDw_Dg': RatioDw_Dg,
+        'cache_dir': fixel_dir,
+        'desiredSTD': 0
     }
 
     start_time = time.time()
@@ -181,11 +188,11 @@ if __name__ == '__main__':
 
         result_fixel = get_FK_Fixel_solution(X, Y, Z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume)
         
-        result_FOD = get_FK_FOD_solution(X, Y, Z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume)
+        # result_FOD = get_FK_FOD_solution(X, Y, Z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume)
     
-        resultDTI = get_FK_DTI_solution(X, Y, Z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume)
+        # resultDTI = get_FK_DTI_solution(X, Y, Z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume)
 
-        resultFK = get_FK_solver_solution(X, Y, Z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume)
+        # resultFK = get_FK_solver_solution(X, Y, Z, RatioDw_Dg, affine, dw, rho, gm, wm, init_scale, resolution_factor, stoppingVolume)
 
         x = int(tissue.shape[0]*X)
         y = int(tissue.shape[1]*Y)

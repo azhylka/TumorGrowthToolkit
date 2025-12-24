@@ -5,6 +5,25 @@ import os.path as osp
 import nibabel as nib
 
 
+def get_tensor_from_lower6_mrtrix(lower6):
+    #[dxx, dxy, dyy, dxz, dyz, dzz]
+    lower6[np.isnan(lower6)] = 0
+    
+    tensor  = np.zeros(lower6.shape[0:3] + (3,3))#.astype(np.string_) for testing
+    print(tensor.shape)
+    tensor[..., 0, 0] = lower6[..., 0]
+    tensor[..., 1, 1] = lower6[..., 1]
+    tensor[..., 2, 2] = lower6[..., 2]
+    tensor[..., 0, 1] = lower6[..., 3]
+    tensor[..., 1, 0] = lower6[..., 3]
+    tensor[..., 0, 2] = lower6[..., 4]
+    tensor[..., 2, 0] = lower6[..., 4]
+    tensor[..., 1, 2] = lower6[..., 5]
+    tensor[..., 2, 1] = lower6[..., 5]
+
+    return tensor
+
+
 def get_direction_to_index():
     mapping = {(x, y, z): (idx if idx < 13 else idx-1) for idx, (x, y, z) in enumerate(itertools.product((-1, 0, 1), (-1, 0, 1), (-1, 0, 1)))
                         if not (x == 0 and y == 0 and z == 0)}
