@@ -1,4 +1,3 @@
-#%%
 import numpy as np
 import copy
 from scipy.ndimage import zoom
@@ -11,15 +10,9 @@ import itertools
 from .utils import get_direction_to_index
 
 '''
-Forward solver DTI 
+Forward solver FOD 
 
-1.	It was unnecessary to use the full DTI tensors, as we are simulating on a grid. So, I used the diffusion in each direction (x,y,z) within each voxel. This is equivalent to the colored DTI images.
- 
-This is how you can generate such an RGB image from DTI:  https://dipy.org/documentation/1.0.0./examples_built/reconst_dti/, but I also included one.
-
-2.	Based on those diffusion values in each direction, I changed the Fisher-Kolmogorov diffusion value along this direction ( ‘get_D_from_DTI()’ ). You can think of many ways to do this. The easiest way would be a proportional mapping, but to suppress low DTI values, I used a polynomial mapping.
-
-By Jonas Weidner - 2023 based on Michal Balcerak solver.
+Andrey Zhylka - Adapting the DTI solver written by Jonas Weidner that was based on Michal Balcerak's solver
 '''
 
 class FK_FOD_Solver(FK_Solver):
